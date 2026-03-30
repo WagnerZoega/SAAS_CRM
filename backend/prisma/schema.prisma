@@ -1,0 +1,205 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Empresa {
+  id                     Int                @id @default(autoincrement())
+  nome                   String             @db.VarChar(255)
+  responsavel            String?            @db.VarChar(255)
+  telefone               String?            @db.VarChar(20)
+  slug                   String             @unique @db.VarChar(100)
+  email                  String             @unique @db.VarChar(255)
+  senha_hash             String             @db.VarChar(255)
+  whatsapp_numero        String?            @db.VarChar(20)
+  whatsapp_instance_name String?            @db.VarChar(100)
+  whatsapp_url_base      String?            @db.VarChar(500)
+  whatsapp_token         String?            @db.VarChar(500)
+  whatsapp_status        String             @default("disconnected") @db.VarChar(50)
+  plano                  String             @default("basic") @db.VarChar(50)
+  ativo                  Boolean            @default(true)
+  faturamento_ativo      Boolean            @default(false)
+  eh_master              Boolean            @default(false)
+  pix_key                String?            @db.VarChar(100)
+  instagram              String?            @db.VarChar(100)
+  logo_url               String?            @db.VarChar(500)
+  bio                    String?
+  cor_primaria           String?            @default("#3b82f6") @db.VarChar(20)
+  vencimento_plano       DateTime?
+  criado_em              DateTime           @default(now())
+  clientes               Cliente[]
+  pagamentos             Pagamento[]
+  pedidos                Pedido[]
+  precos_empresas        PrecoEmpresa[]
+  whatsapp_instancia     WhatsappInstancia?
+
+  @@map("empresas")
+}
+
+model Categoria {
+  id    Int    @id @default(autoincrement())
+  nome  String @unique @db.VarChar(100)
+  slug  String @unique @db.VarChar(100)
+  ligas Liga[]
+
+  @@map("categorias")
+}
+
+model Liga {
+  id           Int       @id @default(autoincrement())
+  nome         String    @db.VarChar(100)
+  categoria_id Int
+  categoria    Categoria @relation(fields: [categoria_id], references: [id])
+  times        Time[]
+
+  @@map("ligas")
+}
+
+model Time {
+  id          Int       @id @default(autoincrement())
+  nome        String    @db.VarChar(255)
+  slug        String    @unique @db.VarChar(100)
+  liga_id     Int
+  escudo_url  String?   @db.VarChar(500)
+  origem_site String?   @db.VarChar(255)
+  empresa_id  Int?
+  produtos    Produto[]
+  liga        Liga      @relation(fields: [liga_id], references: [id])
+
+  @@map("times")
+}
+
+model Produto {
+  id              Int            @id @default(autoincrement())
+  nome            String         @db.VarChar(255)
+  slug            String         @unique @db.VarChar(200)
+  time_id         Int
+  descricao       String?
+  tipo            String?        @db.VarChar(50) // feminina, torcedor, jogador
+  foto_principal  String?        @db.VarChar(500)
+  url_yupoo       String?        @db.VarChar(500)
+  fotos           Json[]         @default([])
+  preco_custo     Decimal?       @db.Decimal(10, 2)
+  ativo           Boolean        @default(true)
+  empresa_id      Int?
+  criado_em       DateTime       @default(now())
+  precos_empresas PrecoEmpresa[]
+  time            Time           @relation(fields: [time_id], references: [id])
+
+  @@map("produtos")
+}
+
+model PrecoEmpresa {
+  id                        Int      @id @default(autoincrement())
+  empresa_id                Int
+  produto_id                Int
+  preco_venda               Decimal  @db.Decimal(10, 2)
+  margem                    Decimal? @db.Decimal(5, 2)
+  preco_custo_personalizado Decimal? @db.Decimal(10, 2)
+  nome_customizado          String?  @db.VarChar(255)
+  time_nome_customizado     String?  @db.VarChar(255)
+  descricao_customizada     String?
+  fotos_customizadas        Json[]   @default([])
+  foto_principal_customizada String? @db.VarChar(500)
+  estoque_disponivel        Int      @default(999)
+  ativo                     Boolean  @default(true)
+  criado_em                 DateTime @default(now())
+  empresa                   Empresa  @relation(fields: [empresa_id], references: [id], onDelete: Cascade)
+  produto                   Produto  @relation(fields: [produto_id], references: [id])
+
+  @@unique([empresa_id, produto_id])
+  @@map("precos_empresas")
+}
+
+model Cliente {
+  id          Int      @id @default(autoincrement())
+  empresa_id  Int
+  nome        String   @db.VarChar(255)
+  telefone    String   @unique @db.VarChar(20)
+  email       String?  @db.VarChar(255)
+  senha_hash  String?  @db.VarChar(255)
+  whatsapp    String?  @db.VarChar(20)
+  endereco    Json?
+  observacoes String?
+  criado_em   DateTime @default(now())
+  bairro      String?  @db.VarChar(100)
+  cep         String?  @db.VarChar(10)
+  cidade      String?  @db.VarChar(100)
+  complemento String?  @db.VarChar(100)
+  cpf         String?  @unique @db.VarChar(14)
+  estado      String?  @db.VarChar(2)
+  logradouro  String?  @db.VarChar(255)
+  numero      String?  @db.VarChar(20)
+  empresa     Empresa  @relation(fields: [empresa_id], references: [id], onDelete: Cascade)
+  pedidos     Pedido[]
+
+  @@map("clientes")
+}
+
+model Pedido {
+  id              Int      @id @default(autoincrement())
+  empresa_id      Int
+  cliente_id      Int
+  numero_pedido   String   @unique @db.VarChar(50)
+  status          String   @default("criado") @db.VarChar(50)
+  total           Decimal  @db.Decimal(10, 2)
+  itens           Json[]
+  rastreio_codigo String?  @db.VarChar(100)
+  observacoes     String?
+  criado_em       DateTime @default(now())
+  atualizado_em   DateTime @updatedAt
+  cliente         Cliente  @relation(fields: [cliente_id], references: [id])
+  empresa         Empresa  @relation(fields: [empresa_id], references: [id], onDelete: Cascade)
+
+  @@map("pedidos")
+}
+
+model WhatsappInstancia {
+  id              Int       @id @default(autoincrement())
+  empresa_id      Int       @unique
+  instance_name   String    @db.VarChar(100)
+  url_base        String    @db.VarChar(500)
+  token_api       String?   @db.VarChar(500)
+  status          String    @default("disconnected") @db.VarChar(50)
+  qrcode_atual    String?
+  ultimo_scan     DateTime?
+  conectado_desde DateTime?
+  atualizado_em   DateTime  @updatedAt
+  empresa         Empresa   @relation(fields: [empresa_id], references: [id], onDelete: Cascade)
+
+  @@map("whatsapp_instancias")
+}
+
+model NoticiaFutebol {
+  id              Int       @id @default(autoincrement())
+  titulo          String    @db.VarChar(500)
+  resumo          String?
+  link            String?   @db.VarChar(500)
+  imagem_url      String?   @db.VarChar(500)
+  categoria       String?   @db.VarChar(100)
+  fonte           String?   @db.VarChar(100)
+  data_publicacao DateTime?
+  criado_em       DateTime  @default(now())
+
+  @@index([data_publicacao(sort: Desc)])
+  @@index([categoria])
+  @@map("noticias_futebol")
+}
+
+model Pagamento {
+  id          Int       @id @default(autoincrement())
+  empresa_id  Int
+  valor       Decimal   @db.Decimal(10, 2)
+  status      String    @default("pendente")
+  external_id String?   @unique
+  metodo      String    @default("pix")
+  criado_em   DateTime  @default(now())
+  pago_em     DateTime?
+  empresa     Empresa   @relation(fields: [empresa_id], references: [id])
+
+  @@map("pagamentos")
+}

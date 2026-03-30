@@ -1,0 +1,6 @@
+node_modules/
+.env
+certs/
+*.log
+auth_log.txt
+catalog_debug.json

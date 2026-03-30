@@ -1,0 +1,12 @@
+const fs = require('fs');
+const path = 'd:\\saas-crm\\frontend\\src\\app\\admin\\page.tsx';
+let content = fs.readFileSync(path, 'utf8');
+
+// Update the Add Product modal to show preview
+content = content.replace(
+  /<label className="text-\[10px\] font-black text-slate-400 uppercase tracking-widest block mb-2">URL Foto ou Carregar<\/label>\s+<div className="flex gap-2">\s+<input type="text" value=\{newProduct\.fotoPrincipal\} onChange=\{\(e\) => setNewProduct\(\{\.\.\.newProduct, fotoPrincipal: e\.target\.value\}\)\} className="flex-1 bg-slate-50 p-4 rounded-xl border border-slate-200 outline-none focus:bg-white focus:border-primary transition-all font-bold text-xs" \/>\s+<label className="cursor-pointer bg-slate-900 text-white p-4 rounded-xl flex items-center justify-center hover:bg-slate-800 transition-all">\s+<Camera size=\{20\} \/>\s+<input type="file" className="hidden" accept="image\/\*" onChange=\{\(e\) => handleFileUpload\(e, true\)\} \/>\s+<\/label>\s+<\/div>/,
+  '<label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">URL Foto ou Carregar</label>\n                        <div className="flex gap-4">\n                           {newProduct.fotoPrincipal && (\n                              <div className="w-16 h-16 rounded-xl border border-slate-200 overflow-hidden relative shrink-0">\n                                 <Image src={newProduct.fotoPrincipal} alt="" fill className="object-cover" />\n                              </div>\n                           )}\n                           <div className="flex-1 flex gap-2">\n                              <input type="text" value={newProduct.fotoPrincipal} onChange={(e) => setNewProduct({...newProduct, fotoPrincipal: e.target.value})} placeholder="https://..." className="flex-1 bg-slate-50 p-4 rounded-xl border border-slate-200 outline-none focus:bg-white focus:border-primary transition-all font-bold text-xs" />\n                              <label className="cursor-pointer bg-slate-900 text-white p-4 rounded-xl flex items-center justify-center hover:bg-slate-800 transition-all">\n                                 <Camera size={20} />\n                                 <input type="file" className="hidden" accept="image/*" onChange={(e) => handleFileUpload(e, true)} />\n                              </label>\n                           </div>\n                        </div>'
+);
+
+fs.writeFileSync(path, content);
+console.log('Preview added successfully');

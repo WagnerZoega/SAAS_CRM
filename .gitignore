@@ -1,0 +1,66 @@
+# Dependencies
+node_modules
+.pnp
+.pnp.js
+
+# Testing
+coverage
+
+# Next.js
+.next/
+out/
+
+# Production
+build
+dist
+
+# Environment Variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+backend/.env
+frontend/.env.local
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+backend/album_debug.docx
+backend/auth_log.docx
+backend/diagnostic_urls.docx
+frontend/startup.log.docx
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Prisma
+backend/prisma/dev.db
+backend/prisma/dev.db-journal
+
+# Project specific
+*.zip
+*.docx
+n8n_workflow_noticias_futebol.json
+backend/catalog_debug.json
+backend/remo_debug.json
+backend/tmp_products.json
+saas-crm-20260328T201244Z-1-001.zip
+
+# Misc
+.vercel
+bower_components
+jspm_packages/
+.npm
+.eslintcache
+.cache/
+
+# Large binaries
+*.exe
+certificado/
