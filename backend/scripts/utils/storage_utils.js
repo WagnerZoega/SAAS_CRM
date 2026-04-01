@@ -29,10 +29,16 @@ async function uploadFromYupoo(yupooUrl, path) {
             method: 'GET',
             responseType: 'arraybuffer',
             headers: {
-                'Referer': 'https://yupoo.com/',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                'Referer': 'https://minkang.x.yupoo.com/',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache',
+                'Connection': 'keep-alive',
+                'DNT': '1'
             },
-            timeout: 10000
+            timeout: 15000
         });
 
         const buffer = Buffer.from(response.data, 'binary');
