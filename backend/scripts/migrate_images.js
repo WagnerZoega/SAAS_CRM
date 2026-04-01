@@ -60,12 +60,45 @@ async function syncToStore(productName, photos, teamId) {
                 updated_at: new Date().toISOString()
             };
 
-            const { data: existing } = await supabase.from('master_products').select('id').eq('nome', productName).maybeSingle();
-            if (existing) {
-                await supabase.from('master_products').update(masterProductData).eq('id', existing.id);
-            } else {
-                await supabase.from('master_products').insert(masterProductData);
+            const { data: mProd, error: mError } = await supabase.from('master_products').upsert(masterProductData, { onConflict: 'nome' }).select().single();
+            
+            if (mError || !mProd) {
+                console.error(`      ❌ Erro ao upsert em master_products (${project.name}):`, mError?.message);
+                continue;
             }
+
+            // 4. AUTO-PROPAGAÇÃO: ATIVAR PARA TODOS OS LOJISTAS (PROFILES) DESTE PROJETO
+            const { data: profiles } = await supabase.from('profiles').select('id, margem_global');
+            
+            if (profiles) {
+                for (const profile of profiles) {
+                    const margin = profile.margem_global || 100;
+                    const precoVenda = 50.00 * (1 + (margin / 100));
+
+                    // Upsert em store_products para cada lojista
+                    // Usamos master_product_id e profile_id como chave de conflito (se configurado) ou verificamos
+                    const { data: existingSP } = await supabase.from('store_products')
+                        .select('id')
+                        .eq('profile_id', profile.id)
+                        .eq('master_product_id', mProd.id)
+                        .maybeSingle();
+
+                    if (!existingSP) {
+                        await supabase.from('store_products').insert({
+                            profile_id: profile.id,
+                            master_product_id: mProd.id,
+                            preco_venda: Math.ceil(precoVenda * 100) / 100,
+                            margem: margin,
+                            ativo: true,
+                            estoque_disponivel: 999
+                        });
+                    } else {
+                        // Apenas garante que está ativo se o produto mestre mudou
+                        await supabase.from('store_products').update({ ativo: true }).eq('id', existingSP.id);
+                    }
+                }
+            }
+
         } catch (err) {
             console.error(`      ⚠️ Falha ao sincronizar com ${project.name}:`, err.message);
         }
@@ -73,7 +106,7 @@ async function syncToStore(productName, photos, teamId) {
 }
 
 async function migrateImages() {
-    console.log('🖼️  INICIANDO MIGRAÇÃO E SINCRONIZAÇÃO COMPLETA...');
+    console.log('🖼️  INICIANDO MIGRAÇÃO E AUTO-PROPAGAÇÃO TOTAL...');
     
     try {
         await db.connect();
@@ -118,7 +151,7 @@ async function migrateImages() {
                 }
             }
 
-            // Atualizar Banco Local (Master)
+            // Atualizar Banco Local
             await db.query(`
                 UPDATE produtos 
                 SET foto_principal = $1, 
@@ -126,9 +159,9 @@ async function migrateImages() {
                 WHERE id = $3
             `, [newPhotos[0] || null, JSON.stringify(newPhotos), p.id]);
 
-            // Sincronizar com as lojas Supabase (LXM, PRI, etc)
+            // Sincronizar e ATIVAR para todos os lojistas
             await syncToStore(p.nome, newPhotos, p.team_id);
-            console.log(`   ✨ Sincronizado com as lojas!`);
+            console.log(`   ✨ Sincronizado e ATIVADO para todos os lojistas!`);
         }
 
         console.log('\n✅ Lote concluído!');

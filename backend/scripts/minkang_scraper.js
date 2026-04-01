@@ -66,7 +66,7 @@ async function syncToSupabase(productName, photos, teamName, ligaNome, teamId, a
                 escudo_url: info.escudo_url
             }, { onConflict: 'slug' }).select().single();
 
-            // 2. SINCRONIZAR PRODUTO
+            // 2. SINCRONIZAR PRODUTO NO MASTER_PRODUCTS DA LOJA
             const foto_frente = (Array.isArray(photos) && photos.length > 0) ? photos[0] : null;
             const foto_verso = (Array.isArray(photos) && photos.length > 1) ? photos[1] : null;
 
@@ -81,16 +81,44 @@ async function syncToSupabase(productName, photos, teamName, ligaNome, teamId, a
                 ativo: ativo,
                 liga: info.liga_name || 'Outros',
                 categoria: info.cat_name || 'Camisas de Time',
-                team_id: dbTime?.id, // Link local no projeto do lojista
+                team_id: dbTime?.id,
                 updated_at: new Date().toISOString()
             };
 
-            const { data: existing } = await supabase.from('master_products').select('id').eq('nome', productName).maybeSingle();
+            const { data: mProd, error: mError } = await supabase.from('master_products').upsert(masterProductData, { onConflict: 'nome' }).select().single();
+            
+            if (mError || !mProd) {
+                console.error(`      ❌ Erro ao upsert em master_products (${project.name}):`, mError?.message);
+                continue;
+            }
 
-            if (existing) {
-                await supabase.from('master_products').update(masterProductData).eq('id', existing.id);
-            } else {
-                await supabase.from('master_products').insert(masterProductData);
+            // 3. AUTO-PROPAGAÇÃO: ATIVAR PARA TODOS OS LOJISTAS (PROFILES) DESTE PROJETO
+            const { data: profiles } = await supabase.from('profiles').select('id, margem_global');
+            
+            if (profiles) {
+                for (const profile of profiles) {
+                    const margin = profile.margem_global || 100;
+                    const precoVenda = 50.00 * (1 + (margin / 100));
+
+                    const { data: existingSP } = await supabase.from('store_products')
+                        .select('id')
+                        .eq('profile_id', profile.id)
+                        .eq('master_product_id', mProd.id)
+                        .maybeSingle();
+
+                    if (!existingSP) {
+                        await supabase.from('store_products').insert({
+                            profile_id: profile.id,
+                            master_product_id: mProd.id,
+                            preco_venda: Math.ceil(precoVenda * 100) / 100,
+                            margem: margin,
+                            ativo: true,
+                            estoque_disponivel: 999
+                        });
+                    } else {
+                        await supabase.from('store_products').update({ ativo: true }).eq('id', existingSP.id);
+                    }
+                }
             }
         } catch (err) {
             console.error(`   ⚠️ Erro no auto-sync (${project.name}):`, err.message);
