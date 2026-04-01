@@ -8,7 +8,6 @@ const db = new Client({
     ssl: { rejectUnauthorized: false }
 });
 
-// Configuração das lojas para sincronização
 const PROJECTS = [
     {
         name: "LXM",
@@ -22,22 +21,50 @@ const PROJECTS = [
     }
 ];
 
-async function syncToStore(productName, photos) {
+async function syncToStore(productName, photos, teamId) {
     for (const project of PROJECTS) {
         try {
             const supabase = createClient(project.url, project.key);
-            const foto_frente = photos[0] || null;
-            const foto_verso = photos[1] || null;
+            
+            // 1. BUSCAR INFOS DA ESTRUTURA NO MASTER
+            const { rows: masterData } = await db.query(`
+                SELECT t.nome as team_name, t.slug as team_slug, t.escudo_url,
+                       l.nome as liga_name, c.nome as cat_name, c.slug as cat_slug
+                FROM times t
+                JOIN ligas l ON t.liga_id = l.id
+                JOIN categorias c ON l.categoria_id = c.id
+                WHERE t.id = $1
+            `, [teamId]);
+
+            if (masterData.length === 0) continue;
+            const info = masterData[0];
+
+            // 2. SINCRONIZAR ESTRUTURA NA LOJA
+            const { data: dbCat } = await supabase.from('categorias').upsert({ nome: info.cat_name, slug: info.cat_slug }, { onConflict: 'slug' }).select().single();
+            const { data: dbLiga } = await supabase.from('ligas').upsert({ nome: info.liga_name, categoria_id: dbCat?.id }, { onConflict: 'nome,categoria_id' }).select().single();
+            const { data: dbTime } = await supabase.from('times').upsert({ nome: info.team_name, slug: info.team_slug, liga_id: dbLiga?.id, escudo_url: info.escudo_url }, { onConflict: 'slug' }).select().single();
+
+            // 3. SINCRONIZAR PRODUTO NO MASTER_PRODUCTS DA LOJA
+            const masterProductData = {
+                nome: productName,
+                descricao: `Camisa de time ${info.team_name || ''}`,
+                foto_frente: photos[0] || null,
+                foto_verso: photos[1] || null,
+                imagem_url: photos[0] || null,
+                imagens: photos,
+                preco_custo: 50.00,
+                ativo: true,
+                liga: info.liga_name || 'Outros',
+                categoria: info.cat_name || 'Camisas de Time',
+                team_id: dbTime?.id,
+                updated_at: new Date().toISOString()
+            };
 
             const { data: existing } = await supabase.from('master_products').select('id').eq('nome', productName).maybeSingle();
             if (existing) {
-                await supabase.from('master_products').update({
-                    foto_frente: foto_frente,
-                    foto_verso: foto_verso,
-                    imagem_url: foto_frente,
-                    imagens: photos,
-                    updated_at: new Date().toISOString()
-                }).eq('id', existing.id);
+                await supabase.from('master_products').update(masterProductData).eq('id', existing.id);
+            } else {
+                await supabase.from('master_products').insert(masterProductData);
             }
         } catch (err) {
             console.error(`      ⚠️ Falha ao sincronizar com ${project.name}:`, err.message);
@@ -46,14 +73,13 @@ async function syncToStore(productName, photos) {
 }
 
 async function migrateImages() {
-    console.log('🖼️  INICIANDO MIGRAÇÃO TOTAL E SYNC (Yupoo -> Supabase Storage)...');
+    console.log('🖼️  INICIANDO MIGRAÇÃO E SINCRONIZAÇÃO COMPLETA...');
     
     try {
         await db.connect();
         
-        // Buscar produtos que ainda usam Yupoo
         const { rows: products } = await db.query(`
-            SELECT id, nome, fotos, slug FROM produtos 
+            SELECT id, nome, fotos, slug, team_id FROM produtos 
             WHERE (foto_principal LIKE '%yupoo.com%' OR fotos::text LIKE '%yupoo.com%')
             ORDER BY id DESC
             LIMIT 500
@@ -92,17 +118,16 @@ async function migrateImages() {
                 }
             }
 
-            // Atualizar Banco Local
-            const foto_principal = newPhotos[0] || null;
+            // Atualizar Banco Local (Master)
             await db.query(`
                 UPDATE produtos 
                 SET foto_principal = $1, 
                     fotos = ARRAY(SELECT jsonb_array_elements($2::jsonb))
                 WHERE id = $3
-            `, [foto_principal, JSON.stringify(newPhotos), p.id]);
+            `, [newPhotos[0] || null, JSON.stringify(newPhotos), p.id]);
 
-            // Sincronizar com as lojas
-            await syncToStore(p.nome, newPhotos);
+            // Sincronizar com as lojas Supabase (LXM, PRI, etc)
+            await syncToStore(p.nome, newPhotos, p.team_id);
             console.log(`   ✨ Sincronizado com as lojas!`);
         }
 

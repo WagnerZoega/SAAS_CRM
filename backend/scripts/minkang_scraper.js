@@ -24,30 +24,67 @@ const PROJECTS = [
     }
 ];
 
-async function syncToSupabase(productName, photos, teamName, ligaNome, categoriaNome, ativo) {
+async function syncToSupabase(productName, photos, teamName, ligaNome, teamId, ativo) {
     for (const project of PROJECTS) {
         if (project.key.includes("COLE_AQUI")) continue;
 
         try {
             const supabase = createClient(project.url, project.key);
+            
+            // 1. SINCRONIZAR ESTRUTURA (Categorias, Ligas, Times)
+            // Primeiro, pegamos os dados reais do nosso banco Master para este time
+            const { rows: masterData } = await db.query(`
+                SELECT t.nome as team_name, t.slug as team_slug, t.escudo_url,
+                       l.nome as liga_name, l.id as master_liga_id,
+                       c.nome as cat_name, c.slug as cat_slug
+                FROM times t
+                JOIN ligas l ON t.liga_id = l.id
+                JOIN categorias c ON l.categoria_id = c.id
+                WHERE t.id = $1
+            `, [teamId]);
+
+            if (masterData.length === 0) continue;
+            const info = masterData[0];
+
+            // A. Sincronizar Categoria
+            const { data: dbCat } = await supabase.from('categorias').upsert({ 
+                nome: info.cat_name, 
+                slug: info.cat_slug 
+            }, { onConflict: 'slug' }).select().single();
+
+            // B. Sincronizar Liga
+            const { data: dbLiga } = await supabase.from('ligas').upsert({ 
+                nome: info.liga_name, 
+                categoria_id: dbCat?.id 
+            }, { onConflict: 'nome,categoria_id' }).select().single();
+
+            // C. Sincronizar Time
+            const { data: dbTime } = await supabase.from('times').upsert({ 
+                nome: info.team_name, 
+                slug: info.team_slug,
+                liga_id: dbLiga?.id,
+                escudo_url: info.escudo_url
+            }, { onConflict: 'slug' }).select().single();
+
+            // 2. SINCRONIZAR PRODUTO
             const foto_frente = (Array.isArray(photos) && photos.length > 0) ? photos[0] : null;
             const foto_verso = (Array.isArray(photos) && photos.length > 1) ? photos[1] : null;
 
             const masterProductData = {
                 nome: productName,
-                descricao: `Camisa de time ${teamName || ''}`,
+                descricao: `Camisa de time ${info.team_name || ''}`,
                 foto_frente: foto_frente,
                 foto_verso: foto_verso,
                 imagem_url: foto_frente,
                 imagens: photos,
                 preco_custo: 50.00,
                 ativo: ativo,
-                liga: ligaNome || 'Outros',
-                categoria: categoriaNome || 'Camisas de Time',
+                liga: info.liga_name || 'Outros',
+                categoria: info.cat_name || 'Camisas de Time',
+                team_id: dbTime?.id, // Link local no projeto do lojista
                 updated_at: new Date().toISOString()
             };
 
-            // Verificar se existe pelo nome para evitar erro de RLS/Constraint
             const { data: existing } = await supabase.from('master_products').select('id').eq('nome', productName).maybeSingle();
 
             if (existing) {
@@ -57,6 +94,47 @@ async function syncToSupabase(productName, photos, teamName, ligaNome, categoria
             }
         } catch (err) {
             console.error(`   ⚠️ Erro no auto-sync (${project.name}):`, err.message);
+        }
+    }
+}
+
+async function syncToStore(productName, photos, teamName, ligaNome, teamId) {
+    for (const project of PROJECTS) {
+        try {
+            const supabase = createClient(project.url, project.key);
+            
+            // 1. SINCRONIZAR ESTRUTURA
+            const { data: dbCat } = await supabase.from('categorias').upsert({ nome: 'Camisas de Time', slug: 'camisas-de-time' }, { onConflict: 'slug' }).select().single();
+            const { data: dbLiga } = await supabase.from('ligas').upsert({ nome: ligaNome, categoria_id: dbCat?.id }, { onConflict: 'nome,categoria_id' }).select().single();
+            const { data: dbTime } = await supabase.from('times').upsert({ nome: teamName, liga_id: dbLiga?.id }, { onConflict: 'slug' }).select().single();
+
+            // 2. SINCRONIZAR PRODUTO
+            const foto_frente = photos[0] || null;
+            const foto_verso = photos[1] || null;
+
+            const masterProductData = {
+                nome: productName,
+                descricao: `Camisa de time ${teamName || ''}`,
+                foto_frente: foto_frente,
+                foto_verso: foto_verso,
+                imagem_url: foto_frente,
+                imagens: photos,
+                preco_custo: 50.00,
+                ativo: true,
+                liga: ligaNome || 'Outros',
+                categoria: 'Camisas de Time',
+                team_id: dbTime?.id,
+                updated_at: new Date().toISOString()
+            };
+
+            const { data: existing } = await supabase.from('master_products').select('id').eq('nome', productName).maybeSingle();
+            if (existing) {
+                await supabase.from('master_products').update(masterProductData).eq('id', existing.id);
+            } else {
+                await supabase.from('master_products').insert(masterProductData);
+            }
+        } catch (err) {
+            console.error(`      ⚠️ Falha ao sincronizar com ${project.name}:`, err.message);
         }
     }
 }
@@ -279,8 +357,8 @@ async function processAlbum(albumUrl, teamName, ligaNome, teamSlug, dbTime) {
             `, [productName, slug, dbTime.id, storagePhotos[0], JSON.stringify(storagePhotos), 50.00, albumUrl, true]);
         }
 
-        // Auto-Sync para Supabase (Lovable) — Usando as fotos JÁ MIGRADAS
-        await syncToSupabase(productName, storagePhotos, teamName, ligaNome, dbTime.id, true);
+        // Auto-Sync para Supabase            // Sincronizar com as lojas Supabase
+            await syncToSupabase(productName, storagePhotos, teamName, ligaNome, dbTime.id, true);
         return true;
     } catch (err) {
         console.error('      ❌ Erro ao salvar produto no banco:', err.message);
