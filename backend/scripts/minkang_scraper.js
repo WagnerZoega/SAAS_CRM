@@ -3,6 +3,7 @@ const axios = require('axios');
 require('dotenv').config();
 // const sharp = require('sharp'); // Removido para evitar erros de instalação no Windows
 const { createClient } = require('@supabase/supabase-js');
+const { uploadFromYupoo } = require('./utils/storage_utils');
 
 const db = new Client({
     connectionString: process.env.DATABASE_URL,
@@ -251,6 +252,16 @@ async function processAlbum(albumUrl, teamName, ligaNome, teamSlug, dbTime) {
         .toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
         .replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').substring(0, 190);
 
+    // V5.9: IMAGE PROXY - Salvar no nosso Storage em vez do link original
+    console.log('      📸 Movendo fotos para o Storage...');
+    const storagePhotos = [];
+    for (let i = 0; i < photos.length; i++) {
+        const path = `products/${teamSlug}/${slug}_${i}.jpg`;
+        const newUrl = await uploadFromYupoo(photos[i], path);
+        if (newUrl) storagePhotos.push(newUrl);
+        else storagePhotos.push(photos[i]); // Fallback se falhar
+    }
+
     try {
         const checkProd = await db.query("SELECT id FROM produtos WHERE slug = $1", [slug]);
         if (checkProd.rows.length > 0) {
@@ -260,16 +271,16 @@ async function processAlbum(albumUrl, teamName, ligaNome, teamSlug, dbTime) {
                     fotos = ARRAY(SELECT jsonb_array_elements($3::jsonb)), 
                     url_yupoo = $4, ativo = $5
                 WHERE id = $6
-            `, [productName, photos[0], JSON.stringify(photos), albumUrl, true, checkProd.rows[0].id]);
+            `, [productName, storagePhotos[0], JSON.stringify(storagePhotos), albumUrl, true, checkProd.rows[0].id]);
         } else {
             await db.query(`
                 INSERT INTO produtos (nome, slug, time_id, foto_principal, fotos, preco_custo, url_yupoo, ativo, criado_em)
                 VALUES ($1, $2, $3, $4, ARRAY(SELECT jsonb_array_elements($5::jsonb)), $6, $7, $8, NOW())
-            `, [productName, slug, dbTime.id, photos[0], JSON.stringify(photos), 50.00, albumUrl, true]);
+            `, [productName, slug, dbTime.id, storagePhotos[0], JSON.stringify(storagePhotos), 50.00, albumUrl, true]);
         }
 
-        // Auto-Sync para Supabase (Lovable)
-        await syncToSupabase(productName, photos, teamName, ligaNome, dbTime.id, true);
+        // Auto-Sync para Supabase (Lovable) — Usando as fotos JÁ MIGRADAS
+        await syncToSupabase(productName, storagePhotos, teamName, ligaNome, dbTime.id, true);
         return true;
     } catch (err) {
         console.error('      ❌ Erro ao salvar produto no banco:', err.message);

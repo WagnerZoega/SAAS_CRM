@@ -15,9 +15,9 @@ async function migrateImages() {
         
         // 1. Buscar produtos do Catálogo Mestre que ainda têm links do Yupoo
         const { rows: products } = await db.query(`
-            SELECT id, nome, fotos, slug FROM master_products 
-            WHERE (foto_frente LIKE '%yupoo.com%' OR fotos::text LIKE '%yupoo.com%')
-            LIMIT 50 -- Vamos processar em lotes
+            SELECT id, nome, fotos, slug FROM produtos 
+            WHERE (foto_principal LIKE '%yupoo.com%' OR fotos::text LIKE '%yupoo.com%')
+            LIMIT 50 -- Processando em lotes
         `);
 
         if (products.length === 0) {
@@ -55,17 +55,14 @@ async function migrateImages() {
             }
 
             // 2. Atualizar o banco de dados com as NOVAS URLs
-            const foto_frente = newPhotos[0] || null;
-            const foto_verso = newPhotos[1] || null;
+            const foto_principal = newPhotos[0] || null;
 
             await db.query(`
-                UPDATE master_products 
-                SET foto_frente = $1, 
-                    foto_verso = $2, 
-                    imagem_url = $1, 
-                    imagens = $3
-                WHERE id = $4
-            `, [foto_frente, foto_verso, newPhotos, p.id]);
+                UPDATE produtos 
+                SET foto_principal = $1, 
+                    fotos = ARRAY(SELECT jsonb_array_elements($2::jsonb))
+                WHERE id = $3
+            `, [foto_principal, JSON.stringify(newPhotos), p.id]);
 
             console.log(`   ✨ Produto atualizado no banco!`);
         }
