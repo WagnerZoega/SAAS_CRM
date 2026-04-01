@@ -1,7 +1,59 @@
 const { PrismaClient } = require('@prisma/client');
 const axios = require('axios');
 const sharp = require('sharp');
+const { createClient } = require('@supabase/supabase-js');
 const prisma = new PrismaClient();
+
+// 🚀 CONFIGURAÇÃO DE AUTO-SYNC PARA LOVABLE (SUPABASE)
+const PROJECTS = [
+    {
+        name: "LXM",
+        url: "https://lxmdimddxzouysdxhqob.supabase.co",
+        key: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx4bWRpbWRkeHpvdXlzZHhocW9iIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUwNDExMjcsImV4cCI6MjA5MDYxNzEyN30.X6xMSUTxPNYbu0rbYSOsrHFIbG6nDZJiKwwVq8579ws"
+    },
+    {
+        name: "PRI",
+        url: "https://pricozkynavwrthtdcmn.supabase.co",
+        key: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InByaWNvemt5bmF2d3J0aHRkY21uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4OTk0NDEsImV4cCI6MjA5MDQ3NTQ0MX0.UjogRabuutUnRkgYv7ecV0hMtspQlCVTiRo-l2532jI"
+    }
+];
+
+async function syncToSupabase(productName, photos, teamName, ligaNome, categoriaNome, ativo) {
+    for (const project of PROJECTS) {
+        if (project.key.includes("COLE_AQUI")) continue;
+
+        try {
+            const supabase = createClient(project.url, project.key);
+            const foto_frente = (Array.isArray(photos) && photos.length > 0) ? photos[0] : null;
+            const foto_verso = (Array.isArray(photos) && photos.length > 1) ? photos[1] : null;
+
+            const masterProductData = {
+                nome: productName,
+                descricao: `Camisa de time ${teamName || ''}`,
+                foto_frente: foto_frente,
+                foto_verso: foto_verso,
+                imagem_url: foto_frente,
+                imagens: photos,
+                preco_custo: 50.00,
+                ativo: ativo,
+                liga: ligaNome || 'Outros',
+                categoria: categoriaNome || 'Camisas de Time',
+                updated_at: new Date().toISOString()
+            };
+
+            // Verificar se existe pelo nome para evitar erro de RLS/Constraint
+            const { data: existing } = await supabase.from('master_products').select('id').eq('nome', productName).maybeSingle();
+
+            if (existing) {
+                await supabase.from('master_products').update(masterProductData).eq('id', existing.id);
+            } else {
+                await supabase.from('master_products').insert(masterProductData);
+            }
+        } catch (err) {
+            console.error(`   ⚠️ Erro no auto-sync (${project.name}):`, err.message);
+        }
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════
 // ESTRATÉGIA V5: Entrar em CADA TIME individualmente
@@ -92,14 +144,14 @@ async function getHTML(url) {
 
 async function analyzePhoto(url) {
     try {
-        const res = await axios.get(url, { 
-            responseType: 'arraybuffer', 
+        const res = await axios.get(url, {
+            responseType: 'arraybuffer',
             timeout: 10000,
             headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://minkang.x.yupoo.com/' }
         });
         const img = sharp(Buffer.from(res.data));
         const { width, height } = await img.metadata();
-        
+
         // V5.6: Filtro de Proporção Rigoroso (Vertical Profissional)
         const aspectRatio = width / height;
         if (aspectRatio > 0.9 || aspectRatio < 0.6) return { isFullShot: false, hash: 0, contourHash: 0, url };
@@ -108,7 +160,7 @@ async function analyzePhoto(url) {
         // Se houver "detalhe" ou cor de tecido nas bordas, é um ZOOM.
         const marginH = Math.floor(width * 0.15); // 15% de margem lateral
         const marginV = Math.floor(height * 0.10); // 10% de margem vertical
-        
+
         // Amostras das bordas (Superior, Esquerda, Direita)
         const edgeStats = [
             await img.clone().extract({ left: 0, top: 0, width: width, height: marginV }).stats(), // Topo
@@ -128,7 +180,7 @@ async function analyzePhoto(url) {
             const st = await img.clone().extract({ left: l, top: t, width: cs, height: cs }).stats();
             corners.push({ r: st.channels[0].mean, g: st.channels[1].mean, b: st.channels[2].mean });
         }
-        
+
         let maxDiff = 0;
         for (let i = 0; i < 4; i++) {
             for (let j = i + 1; j < 4; j++) {
@@ -137,16 +189,16 @@ async function analyzePhoto(url) {
             }
         }
 
-        const cx = Math.max(0, Math.floor(width/2) - 25), cy = Math.max(0, Math.floor(height/2) - 25);
+        const cx = Math.max(0, Math.floor(width / 2) - 25), cy = Math.max(0, Math.floor(height / 2) - 25);
         const centerStats = await img.clone().extract({ left: cx, top: cy, width: 50, height: 50 }).stats();
         const center = { r: centerStats.channels[0].mean, g: centerStats.channels[1].mean, b: centerStats.channels[2].mean };
-        
+
         const avgCorner = {
             r: (corners[0].r + corners[1].r + corners[2].r + corners[3].r) / 4,
             g: (corners[0].g + corners[1].g + corners[2].g + corners[3].g) / 4,
             b: (corners[0].b + corners[1].b + corners[2].b + corners[3].b) / 4
         };
-        
+
         const contrast = Math.sqrt(Math.pow(center.r - avgCorner.r, 2) + Math.pow(center.g - avgCorner.g, 2) + Math.pow(center.b - avgCorner.b, 2));
         const saturation = getSaturation(avgCorner.r, avgCorner.g, avgCorner.b);
 
@@ -162,9 +214,9 @@ async function analyzePhoto(url) {
         const topContour = await img.clone().extract({ left: 0, top: 0, width: width, height: contourWidth }).stats();
         const bottomContour = await img.clone().extract({ left: 0, top: height - contourWidth, width: width, height: contourWidth }).stats();
         const contourHash = Math.round(
-            topContour.channels[0].mean * 1000 + 
-            bottomContour.channels[0].mean * 100 + 
-            topContour.channels[1].mean * 10 + 
+            topContour.channels[0].mean * 1000 +
+            bottomContour.channels[0].mean * 100 +
+            topContour.channels[1].mean * 10 +
             bottomContour.channels[1].mean
         );
 
@@ -175,14 +227,14 @@ async function analyzePhoto(url) {
 async function getFrontBackPhotos(albumUrl) {
     const html = await getHTML(albumUrl);
     if (!html) return [];
-    
+
     const regex = /https:\/\/photo\.yupoo\.com\/[^\/]+\/[^\/]+\/[^"'\s<>]+(?:\.jpg|\.jpeg|\.png)/gi;
     const matches = html.match(regex) || [];
     const unique = [...new Set(matches.map(img => img.split('?')[0]))].filter(img => {
         const l = img.toLowerCase();
         return !l.includes('icon') && !l.includes('logo') && !l.includes('square') && !l.includes('small') && !l.includes('medium');
     });
-    
+
     if (unique.length === 0) return [];
     if (unique.length <= 2) return unique.slice(0, 2);
 
@@ -206,31 +258,31 @@ async function getFrontBackPhotos(albumUrl) {
             }
         }
     }
-    
+
     // Fallback: Estratégia de Score Global em todas para casos complexos
     const analyzed = [];
     for (const url of unique) {
         const res = await analyzePhoto(url);
         if (res.isFullShot) analyzed.push(res);
     }
-    
+
     if (analyzed.length < 2) {
         return unique.length > 2 ? [unique[1], unique[unique.length - 2]] : [unique[0], unique[unique.length - 1]];
     }
-    
+
     let bestA, bestB, maxScore = -1;
     for (let i = 0; i < analyzed.length; i++) {
         for (let j = i + 1; j < analyzed.length; j++) {
             const colorDiff = Math.abs(analyzed[i].hash - analyzed[j].hash);
             const contourDiff = Math.abs(analyzed[i].contourHash - analyzed[j].contourHash);
             const posFactor = (i + j) / (analyzed.length * 2);
-            
+
             // Penalidade de contorno (mesmo vestuário check)
-            const contourPenalty = contourDiff > 1000 ? 0.2 : 
-                                   contourDiff > 500 ? 0.6 : 1.0;
-            
+            const contourPenalty = contourDiff > 1000 ? 0.2 :
+                contourDiff > 500 ? 0.6 : 1.0;
+
             const score = colorDiff * (1 + posFactor) * contourPenalty;
-            
+
             if (score > maxScore) {
                 maxScore = score;
                 bestA = analyzed[i];
@@ -248,30 +300,33 @@ async function getFrontBackPhotos(albumUrl) {
 async function processAlbum(albumUrl, teamName, ligaNome, teamSlug, dbTime) {
     const html = await getHTML(albumUrl);
     if (!html) return false;
-    
+
     // Extrair título
     let title = 'Produto';
     const m = html.match(/data-name="([^"]+)"/i) || html.match(/<title>([^<]+)<\/title>/i);
     if (m) title = m[1].split('|')[0].trim();
-    
+
     // Traduzir o nome
     const productName = translateName(title);
-    
+
     // Fotos frente/verso
     const photos = await getFrontBackPhotos(albumUrl);
     if (photos.length === 0) return false;
-    
+
     // Slug do produto
     const slug = (productName + '-' + teamName)
         .toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
         .replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').substring(0, 190);
-    
+
     await prisma.produto.upsert({
         where: { slug },
         update: { nome: productName, foto_principal: photos[0], fotos: photos, time_id: dbTime.id, url_yupoo: albumUrl, ativo: true },
         create: { nome: productName, slug, time_id: dbTime.id, foto_principal: photos[0], fotos: photos, preco_custo: 50.00, url_yupoo: albumUrl, ativo: true }
     });
-    
+
+    // Auto-Sync para Supabase (Lovable)
+    await syncToSupabase(productName, photos, teamName, ligaNome, dbTime.id, true);
+
     return true;
 }
 
@@ -279,15 +334,15 @@ async function getAllAlbumsFromPage(url) {
     let allAlbums = [];
     let currentUrl = url;
     let page = 1;
-    
+
     while (currentUrl) {
         const html = await getHTML(currentUrl);
         if (!html) break;
-        
+
         const found = html.match(/\/albums\/(\d+)\?uid=1/g) || [];
         const unique = [...new Set(found)].map(l => `https://minkang.x.yupoo.com${l}`);
         allAlbums.push(...unique);
-        
+
         // Próxima página
         const next = html.match(/href="([^"]+)"[^>]*class="pagination__next"/);
         if (next) {
@@ -297,7 +352,7 @@ async function getAllAlbumsFromPage(url) {
             currentUrl = null;
         }
     }
-    
+
     return [...new Set(allAlbums)];
 }
 
@@ -306,7 +361,7 @@ async function getAllAlbumsFromPage(url) {
 // ═══════════════════════════════════════════════════════════════
 async function scrapeBrasileirao() {
     console.log('\n🇧🇷 ═══ BRASILEIRÃO — Time por Time ═══');
-    
+
     const catSlug = 'brasileirao';
     const dbCat = await prisma.categoria.upsert({
         where: { slug: catSlug },
@@ -314,24 +369,24 @@ async function scrapeBrasileirao() {
         create: { nome: 'BRASILEIRÃO', slug: catSlug }
     });
     const dbLiga = await prisma.liga.findFirst({ where: { nome: 'BRASILEIRÃO' } }) ||
-                   await prisma.liga.create({ data: { nome: 'BRASILEIRÃO', categoria_id: dbCat.id } });
-    
+        await prisma.liga.create({ data: { nome: 'BRASILEIRÃO', categoria_id: dbCat.id } });
+
     for (const t of BRASILEIRAO_TEAMS) {
         console.log(`\n⚽ ${t.team}`);
-        
+
         const teamSlug = t.team.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-');
         const dbTime = await prisma.time.upsert({
             where: { slug: teamSlug },
             update: { nome: t.team },
             create: { nome: t.team, slug: teamSlug, liga_id: dbLiga.id }
         });
-        
+
         const albums = await getAllAlbumsFromPage(t.url);
         console.log(`   📦 ${albums.length} modelos encontrados`);
-        
+
         let ok = 0;
         for (let i = 0; i < albums.length; i++) {
-            process.stdout.write(`   [${i+1}/${albums.length}] `);
+            process.stdout.write(`   [${i + 1}/${albums.length}] `);
             const success = await processAlbum(albums[i], t.team, 'BRASILEIRÃO', teamSlug, dbTime);
             console.log(success ? '✅' : '❌');
             if (success) ok++;
@@ -360,7 +415,7 @@ function extractTeamFromTitle(title) {
 
 async function scrapeGenericCategory(catInfo) {
     console.log(`\n🌍 ═══ ${catInfo.name} ═══`);
-    
+
     const catSlug = catInfo.liga.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '-');
     const dbCat = await prisma.categoria.upsert({
         where: { slug: catSlug },
@@ -368,33 +423,33 @@ async function scrapeGenericCategory(catInfo) {
         create: { nome: catInfo.liga, slug: catSlug }
     });
     const dbLiga = await prisma.liga.findFirst({ where: { nome: catInfo.liga, categoria_id: dbCat.id } }) ||
-                   await prisma.liga.create({ data: { nome: catInfo.liga, categoria_id: dbCat.id } });
-    
+        await prisma.liga.create({ data: { nome: catInfo.liga, categoria_id: dbCat.id } });
+
     const albums = await getAllAlbumsFromPage(catInfo.url);
     console.log(`   📦 ${albums.length} modelos encontrados`);
-    
+
     let ok = 0;
     for (let i = 0; i < albums.length; i++) {
         const albumUrl = albums[i];
         const html = await getHTML(albumUrl);
-        if (!html) { console.log(`   [${i+1}/${albums.length}] ❌`); continue; }
-        
+        if (!html) { console.log(`   [${i + 1}/${albums.length}] ❌`); continue; }
+
         let title = 'Produto';
         const m = html.match(/data-name="([^"]+)"/i) || html.match(/<title>([^<]+)<\/title>/i);
         if (m) title = m[1].split('|')[0].trim();
-        
+
         const teamName = extractTeamFromTitle(title);
         const teamSlug = teamName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-');
-        
-        if (!teamSlug || teamSlug.length < 2) { console.log(`   [${i+1}/${albums.length}] ❌ nome inválido`); continue; }
-        
+
+        if (!teamSlug || teamSlug.length < 2) { console.log(`   [${i + 1}/${albums.length}] ❌ nome inválido`); continue; }
+
         const dbTime = await prisma.time.upsert({
             where: { slug: teamSlug },
             update: { nome: teamName },
             create: { nome: teamName, slug: teamSlug, liga_id: dbLiga.id }
         });
-        
-        process.stdout.write(`   [${i+1}/${albums.length}] ${teamName.substring(0,20)} → `);
+
+        process.stdout.write(`   [${i + 1}/${albums.length}] ${teamName.substring(0, 20)} → `);
         const success = await processAlbum(albumUrl, teamName, catInfo.liga, teamSlug, dbTime);
         console.log(success ? '✅' : '❌');
         if (success) ok++;
@@ -409,7 +464,7 @@ async function linkToStore() {
     console.log('\n🏪 Vinculando produtos à loja WZ Sport...');
     const empresa = await prisma.empresa.findUnique({ where: { slug: 'wz-sport' } });
     if (!empresa) { console.log('❌ Empresa não encontrada'); return; }
-    
+
     const result = await prisma.$executeRawUnsafe(`
         INSERT INTO precos_empresas (empresa_id, produto_id, preco_venda, ativo, criado_em)
         SELECT ${empresa.id}, p.id, 89.90, true, NOW()
@@ -429,22 +484,22 @@ async function main() {
     console.log('   • Tradução PT-BR automática');
     console.log('   • Vinculação automática à loja');
     console.log('');
-    
+
     await scrapeBrasileirao();
-    
+
     for (const cat of OTHER_CATEGORIES) {
         await scrapeGenericCategory(cat);
     }
-    
+
     await linkToStore();
-    
+
     const totalProd = await prisma.produto.count();
     const totalTime = await prisma.time.count();
     console.log(`\n═══ RESULTADO FINAL ═══`);
     console.log(`   Produtos: ${totalProd}`);
     console.log(`   Times: ${totalTime}`);
     console.log('✅ CONCLUÍDO');
-    
+
     await prisma.$disconnect();
     process.exit(0);
 }
