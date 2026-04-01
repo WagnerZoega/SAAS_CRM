@@ -45,8 +45,10 @@ async function syncProject(pSource, project) {
 
         if (fotosValidas.length === 0) fotosValidas = fotos; // fallback se não houver filtro
 
-        const foto_frente = (fotosValidas.length > 0) ? fotosValidas[0] : (p.foto_principal || null);
-        const foto_verso = (fotosValidas.length > 1) ? fotosValidas[1] : (fotosValidas.length > 0 ? null : null);
+        // Lógica de 2ª e 3ª Foto (Ignorar Thumbnail)
+        // Se houver pelo menos 3 fotos, a 1ª (index 0) é lixo/thumb.
+        const foto_frente = (fotosValidas.length >= 2) ? fotosValidas[1] : (fotosValidas.length > 0 ? fotosValidas[0] : (p.foto_principal || null));
+        const foto_verso = (fotosValidas.length >= 3) ? fotosValidas[2] : (fotosValidas.length > 1 ? fotosValidas[1] : null);
 
         const masterProductData = {
             nome: p.nome,
@@ -54,7 +56,7 @@ async function syncProject(pSource, project) {
             foto_frente: foto_frente,
             foto_verso: foto_verso,
             imagem_url: foto_frente,
-            imagens: Array.isArray(fotos) ? fotos : [foto_frente],
+            imagens: fotosValidas,
             preco_custo: p.preco_custo ? parseFloat(p.preco_custo) : 50.00,
             ativo: p.ativo,
             liga: p.liga_nome || 'Outros',

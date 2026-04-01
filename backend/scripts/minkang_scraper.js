@@ -1,8 +1,13 @@
-const { PrismaClient } = require('@prisma/client');
+const { Client } = require('pg');
 const axios = require('axios');
-const sharp = require('sharp');
+require('dotenv').config();
+// const sharp = require('sharp'); // Removido para evitar erros de instalação no Windows
 const { createClient } = require('@supabase/supabase-js');
-const prisma = new PrismaClient();
+
+const db = new Client({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
+});
 
 // 🚀 CONFIGURAÇÃO DE AUTO-SYNC PARA LOVABLE (SUPABASE)
 const PROJECTS = [
@@ -143,85 +148,8 @@ async function getHTML(url) {
 }
 
 async function analyzePhoto(url) {
-    try {
-        const res = await axios.get(url, {
-            responseType: 'arraybuffer',
-            timeout: 10000,
-            headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://minkang.x.yupoo.com/' }
-        });
-        const img = sharp(Buffer.from(res.data));
-        const { width, height } = await img.metadata();
-
-        // V5.6: Filtro de Proporção Rigoroso (Vertical Profissional)
-        const aspectRatio = width / height;
-        if (aspectRatio > 0.9 || aspectRatio < 0.6) return { isFullShot: false, hash: 0, contourHash: 0, url };
-
-        // V5.6: Auditoria de Pureza das Bordas (Detecção de Espaço Vazio)
-        // Se houver "detalhe" ou cor de tecido nas bordas, é um ZOOM.
-        const marginH = Math.floor(width * 0.15); // 15% de margem lateral
-        const marginV = Math.floor(height * 0.10); // 10% de margem vertical
-
-        // Amostras das bordas (Superior, Esquerda, Direita)
-        const edgeStats = [
-            await img.clone().extract({ left: 0, top: 0, width: width, height: marginV }).stats(), // Topo
-            await img.clone().extract({ left: 0, top: marginV, width: marginH, height: height - marginV * 2 }).stats(), // Lateral Esq
-            await img.clone().extract({ left: width - marginH, top: marginV, width: marginH, height: height - marginV * 2 }).stats() // Lateral Dir
-        ];
-
-        // Se a variância nas bordas for alta, significa que há tecido/detalhe encostando no limite -> ZOOM
-        const edgeVariance = (edgeStats[0].channels[0].stdev + edgeStats[1].channels[0].stdev + edgeStats[2].channels[0].stdev) / 3;
-        if (edgeVariance > 15) return { isFullShot: false, hash: 0, contourHash: 0, url }; // Arredores devem ser "mortos" (fundo)
-
-        // V5.3: Uniformidade + Contraste + Saturação
-        const cs = 12;
-        const positions = [[0, 0], [width - cs, 0], [0, height - cs], [width - cs, height - cs]];
-        let corners = [];
-        for (const [l, t] of positions) {
-            const st = await img.clone().extract({ left: l, top: t, width: cs, height: cs }).stats();
-            corners.push({ r: st.channels[0].mean, g: st.channels[1].mean, b: st.channels[2].mean });
-        }
-
-        let maxDiff = 0;
-        for (let i = 0; i < 4; i++) {
-            for (let j = i + 1; j < 4; j++) {
-                const d = Math.sqrt(Math.pow(corners[i].r - corners[j].r, 2) + Math.pow(corners[i].g - corners[j].g, 2) + Math.pow(corners[i].b - corners[j].b, 2));
-                if (d > maxDiff) maxDiff = d;
-            }
-        }
-
-        const cx = Math.max(0, Math.floor(width / 2) - 25), cy = Math.max(0, Math.floor(height / 2) - 25);
-        const centerStats = await img.clone().extract({ left: cx, top: cy, width: 50, height: 50 }).stats();
-        const center = { r: centerStats.channels[0].mean, g: centerStats.channels[1].mean, b: centerStats.channels[2].mean };
-
-        const avgCorner = {
-            r: (corners[0].r + corners[1].r + corners[2].r + corners[3].r) / 4,
-            g: (corners[0].g + corners[1].g + corners[2].g + corners[3].g) / 4,
-            b: (corners[0].b + corners[1].b + corners[2].b + corners[3].b) / 4
-        };
-
-        const contrast = Math.sqrt(Math.pow(center.r - avgCorner.r, 2) + Math.pow(center.g - avgCorner.g, 2) + Math.pow(center.b - avgCorner.b, 2));
-        const saturation = getSaturation(avgCorner.r, avgCorner.g, avgCorner.b);
-
-        // V5.6 Final Logic:
-        // 1. Fundo limpo (maxDiff < 45)
-        // 2. Contraste Real (contrast > 45) -> Garante objeto central sólido
-        // 3. Sem cor vibrante no fundo (saturation < 0.25) -> Purifica o estúdio
-        const isFullShot = maxDiff < 45 && contrast > 45 && saturation < 0.25;
-        const hash = Math.round(center.r * 10000 + center.g * 100 + center.b);
-
-        // V5.4: Hash do Contorno (Top/Bottom similarity)
-        const contourWidth = 20;
-        const topContour = await img.clone().extract({ left: 0, top: 0, width: width, height: contourWidth }).stats();
-        const bottomContour = await img.clone().extract({ left: 0, top: height - contourWidth, width: width, height: contourWidth }).stats();
-        const contourHash = Math.round(
-            topContour.channels[0].mean * 1000 +
-            bottomContour.channels[0].mean * 100 +
-            topContour.channels[1].mean * 10 +
-            bottomContour.channels[1].mean
-        );
-
-        return { isFullShot, hash, contourHash, url, width, height };
-    } catch { return { isFullShot: false, hash: 0, contourHash: 0, url }; }
+    // V5.8: Desativado Sharp. Confiando na regra de 90% (2ª e 3ª fotos).
+    return { isFullShot: true, hash: Math.random(), contourHash: Math.random(), url };
 }
 
 async function getFrontBackPhotos(albumUrl) {
@@ -238,11 +166,22 @@ async function getFrontBackPhotos(albumUrl) {
     if (unique.length === 0) return [];
     if (unique.length <= 2) return unique.slice(0, 2);
 
-    // V5.5: Estratégia de Exaustão de Pares Padrão ([0,1], [1,2] e os 2 últimos)
-    // Isso garante capturar as versões "LIMPAS" que o Minkang coloca no início de álbuns novos
+    // V5.7: Estratégia Prioritária: 2ª e 3ª Fotos (Índices 1 e 2)
+    // Conforme feedback: 90% das vezes a 1ª é thumbnail, 2ª é Frente, 3ª é Verso.
+    if (unique.length >= 3) {
+        const pair = [unique[1], unique[2]];
+        const analyzed = [await analyzePhoto(pair[0]), await analyzePhoto(pair[1])];
+        
+        // Se passarem pelo filtro básico, já aceitamos direto
+        if (analyzed[0].isFullShot && analyzed[1].isFullShot) {
+            console.log("      ✅ Par Padrão [1, 2] Identificado!");
+            return [analyzed[0].url, analyzed[1].url];
+        }
+    }
+
+    // Fallback: Se o par [1, 2] falhar, testamos outros pares padrão ([0,1] e últimos)
     const potentialPairs = [
         [unique[0], unique[1]],
-        [unique[1], unique[2]],
         [unique[unique.length - 2], unique[unique.length - 1]]
     ];
 
@@ -250,12 +189,7 @@ async function getFrontBackPhotos(albumUrl) {
         if (!pair[0] || !pair[1]) continue;
         const analyzed = [await analyzePhoto(pair[0]), await analyzePhoto(pair[1])];
         if (analyzed[0].isFullShot && analyzed[1].isFullShot) {
-            const contourDiff = Math.abs(analyzed[0].contourHash - analyzed[1].contourHash);
-            const colorDiff = Math.abs(analyzed[0].hash - analyzed[1].hash);
-            // Contorno quase idêntico (mesma peça) + cores diferentes (Frente vs Verso)
-            if (contourDiff < 600 && colorDiff > 150 && colorDiff < 18000) {
-                return [analyzed[0].url, analyzed[1].url];
-            }
+            return [analyzed[0].url, analyzed[1].url];
         }
     }
 
@@ -313,21 +247,34 @@ async function processAlbum(albumUrl, teamName, ligaNome, teamSlug, dbTime) {
     const photos = await getFrontBackPhotos(albumUrl);
     if (photos.length === 0) return false;
 
-    // Slug do produto
     const slug = (productName + '-' + teamName)
         .toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
         .replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').substring(0, 190);
 
-    await prisma.produto.upsert({
-        where: { slug },
-        update: { nome: productName, foto_principal: photos[0], fotos: photos, time_id: dbTime.id, url_yupoo: albumUrl, ativo: true },
-        create: { nome: productName, slug, time_id: dbTime.id, foto_principal: photos[0], fotos: photos, preco_custo: 50.00, url_yupoo: albumUrl, ativo: true }
-    });
+    try {
+        const checkProd = await db.query("SELECT id FROM produtos WHERE slug = $1", [slug]);
+        if (checkProd.rows.length > 0) {
+            await db.query(`
+                UPDATE produtos SET 
+                    nome = $1, foto_principal = $2, 
+                    fotos = ARRAY(SELECT jsonb_array_elements($3::jsonb)), 
+                    url_yupoo = $4, ativo = $5
+                WHERE id = $6
+            `, [productName, photos[0], JSON.stringify(photos), albumUrl, true, checkProd.rows[0].id]);
+        } else {
+            await db.query(`
+                INSERT INTO produtos (nome, slug, time_id, foto_principal, fotos, preco_custo, url_yupoo, ativo, criado_em)
+                VALUES ($1, $2, $3, $4, ARRAY(SELECT jsonb_array_elements($5::jsonb)), $6, $7, $8, NOW())
+            `, [productName, slug, dbTime.id, photos[0], JSON.stringify(photos), 50.00, albumUrl, true]);
+        }
 
-    // Auto-Sync para Supabase (Lovable)
-    await syncToSupabase(productName, photos, teamName, ligaNome, dbTime.id, true);
-
-    return true;
+        // Auto-Sync para Supabase (Lovable)
+        await syncToSupabase(productName, photos, teamName, ligaNome, dbTime.id, true);
+        return true;
+    } catch (err) {
+        console.error('      ❌ Erro ao salvar produto no banco:', err.message);
+        return false;
+    }
 }
 
 async function getAllAlbumsFromPage(url) {
@@ -363,23 +310,47 @@ async function scrapeBrasileirao() {
     console.log('\n🇧🇷 ═══ BRASILEIRÃO — Time por Time ═══');
 
     const catSlug = 'brasileirao';
-    const dbCat = await prisma.categoria.upsert({
-        where: { slug: catSlug },
-        update: { nome: 'BRASILEIRÃO' },
-        create: { nome: 'BRASILEIRÃO', slug: catSlug }
-    });
-    const dbLiga = await prisma.liga.findFirst({ where: { nome: 'BRASILEIRÃO' } }) ||
-        await prisma.liga.create({ data: { nome: 'BRASILEIRÃO', categoria_id: dbCat.id } });
+    let dbCat, dbLiga;
+
+    try {
+        const checkCat = await db.query("SELECT id FROM categorias WHERE slug = $1", [catSlug]);
+        if (checkCat.rows.length > 0) {
+            dbCat = checkCat.rows[0];
+        } else {
+            const insCat = await db.query("INSERT INTO categorias (nome, slug) VALUES ('BRASILEIRÃO', $1) RETURNING id", [catSlug]);
+            dbCat = insCat.rows[0];
+        }
+
+        const checkLiga = await db.query("SELECT id FROM ligas WHERE nome = 'BRASILEIRÃO' AND categoria_id = $1", [dbCat.id]);
+        if (checkLiga.rows.length > 0) {
+            dbLiga = checkLiga.rows[0];
+        } else {
+            const insLiga = await db.query("INSERT INTO ligas (nome, categoria_id) VALUES ('BRASILEIRÃO', $1) RETURNING id", [dbCat.id]);
+            dbLiga = insLiga.rows[0];
+        }
+    } catch (err) {
+        console.error('❌ Erro ao preparar categorias:', err.message);
+        return;
+    }
 
     for (const t of BRASILEIRAO_TEAMS) {
         console.log(`\n⚽ ${t.team}`);
 
         const teamSlug = t.team.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-');
-        const dbTime = await prisma.time.upsert({
-            where: { slug: teamSlug },
-            update: { nome: t.team },
-            create: { nome: t.team, slug: teamSlug, liga_id: dbLiga.id }
-        });
+        
+        let dbTime;
+        try {
+            const checkTime = await db.query("SELECT id FROM times WHERE slug = $1", [teamSlug]);
+            if (checkTime.rows.length > 0) {
+                dbTime = checkTime.rows[0];
+            } else {
+                const insTime = await db.query("INSERT INTO times (nome, slug, liga_id) VALUES ($1, $2, $3) RETURNING id", [t.team, teamSlug, dbLiga.id]);
+                dbTime = insTime.rows[0];
+            }
+        } catch (err) {
+            console.error(`   ❌ Erro ao salvar time ${t.team}:`, err.message);
+            continue;
+        }
 
         const albums = await getAllAlbumsFromPage(t.url);
         console.log(`   📦 ${albums.length} modelos encontrados`);
@@ -417,13 +388,28 @@ async function scrapeGenericCategory(catInfo) {
     console.log(`\n🌍 ═══ ${catInfo.name} ═══`);
 
     const catSlug = catInfo.liga.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '-');
-    const dbCat = await prisma.categoria.upsert({
-        where: { slug: catSlug },
-        update: { nome: catInfo.liga },
-        create: { nome: catInfo.liga, slug: catSlug }
-    });
-    const dbLiga = await prisma.liga.findFirst({ where: { nome: catInfo.liga, categoria_id: dbCat.id } }) ||
-        await prisma.liga.create({ data: { nome: catInfo.liga, categoria_id: dbCat.id } });
+    let dbCat, dbLiga;
+
+    try {
+        const checkCat = await db.query("SELECT id FROM categorias WHERE slug = $1", [catSlug]);
+        if (checkCat.rows.length > 0) {
+            dbCat = checkCat.rows[0];
+        } else {
+            const insCat = await db.query("INSERT INTO categorias (nome, slug) VALUES ($1, $2) RETURNING id", [catInfo.liga, catSlug]);
+            dbCat = insCat.rows[0];
+        }
+
+        const checkLiga = await db.query("SELECT id FROM ligas WHERE nome = $1 AND categoria_id = $2", [catInfo.liga, dbCat.id]);
+        if (checkLiga.rows.length > 0) {
+            dbLiga = checkLiga.rows[0];
+        } else {
+            const insLiga = await db.query("INSERT INTO ligas (nome, categoria_id) VALUES ($1, $2) RETURNING id", [catInfo.liga, dbCat.id]);
+            dbLiga = insLiga.rows[0];
+        }
+    } catch (err) {
+        console.error('❌ Erro ao preparar categoria genérica:', err.message);
+        return;
+    }
 
     const albums = await getAllAlbumsFromPage(catInfo.url);
     console.log(`   📦 ${albums.length} modelos encontrados`);
@@ -443,11 +429,19 @@ async function scrapeGenericCategory(catInfo) {
 
         if (!teamSlug || teamSlug.length < 2) { console.log(`   [${i + 1}/${albums.length}] ❌ nome inválido`); continue; }
 
-        const dbTime = await prisma.time.upsert({
-            where: { slug: teamSlug },
-            update: { nome: teamName },
-            create: { nome: teamName, slug: teamSlug, liga_id: dbLiga.id }
-        });
+        let dbTime;
+        try {
+            const checkTime = await db.query("SELECT id FROM times WHERE slug = $1", [teamSlug]);
+            if (checkTime.rows.length > 0) {
+                dbTime = checkTime.rows[0];
+            } else {
+                const insTime = await db.query("INSERT INTO times (nome, slug, liga_id) VALUES ($1, $2, $3) RETURNING id", [teamName, teamSlug, dbLiga.id]);
+                dbTime = insTime.rows[0];
+            }
+        } catch (err) {
+            console.error(`   ❌ Erro ao salvar time ${teamName}:`, err.message);
+            continue;
+        }
 
         process.stdout.write(`   [${i + 1}/${albums.length}] ${teamName.substring(0, 20)} → `);
         const success = await processAlbum(albumUrl, teamName, catInfo.liga, teamSlug, dbTime);
@@ -462,46 +456,56 @@ async function scrapeGenericCategory(catInfo) {
 // ═══════════════════════════════════════════════════════════════
 async function linkToStore() {
     console.log('\n🏪 Vinculando produtos à loja WZ Sport...');
-    const empresa = await prisma.empresa.findUnique({ where: { slug: 'wz-sport' } });
-    if (!empresa) { console.log('❌ Empresa não encontrada'); return; }
+    try {
+        const empresaRes = await db.query("SELECT id FROM empresas WHERE slug = 'wz-sport'");
+        const empresa = empresaRes.rows[0];
+        if (!empresa) { console.log('❌ Empresa não encontrada'); return; }
 
-    const result = await prisma.$executeRawUnsafe(`
-        INSERT INTO precos_empresas (empresa_id, produto_id, preco_venda, ativo, criado_em)
-        SELECT ${empresa.id}, p.id, 89.90, true, NOW()
-        FROM produtos p
-        WHERE NOT EXISTS (SELECT 1 FROM precos_empresas pe WHERE pe.empresa_id = ${empresa.id} AND pe.produto_id = p.id)
-    `);
-    console.log(`   ✅ ${result} novos produtos vinculados`);
+        const result = await db.query(`
+            INSERT INTO precos_empresas (empresa_id, produto_id, preco_venda, ativo, criado_em)
+            SELECT $1, p.id, 89.90, true, NOW()
+            FROM produtos p
+            WHERE NOT EXISTS (SELECT 1 FROM precos_empresas pe WHERE pe.empresa_id = $1 AND pe.produto_id = p.id)
+        `, [empresa.id]);
+        console.log(`   ✅ ${result.rowCount} novos produtos vinculados`);
+    } catch (err) {
+        console.error('❌ Erro ao vincular à loja:', err.message);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════
 // MAIN
 // ═══════════════════════════════════════════════════════════════
 async function main() {
-    console.log('🚀 SCRAPER MINKANG V5 — SUBCATEGORIAS POR TIME');
+    console.log('🚀 SCRAPER MINKANG V5 — SQL DIRETO');
     console.log('   • Brasileirão: 26 times, cada um com sua página');
     console.log('   • Foto: 2ª e 3ª (regra dos 90%)');
-    console.log('   • Tradução PT-BR automática');
-    console.log('   • Vinculação automática à loja');
+    console.log('   • Conexão: SQL Nativo (Adeus Prisma Error!)');
     console.log('');
 
-    await scrapeBrasileirao();
+    try {
+        await db.connect();
+        
+        await scrapeBrasileirao();
 
-    for (const cat of OTHER_CATEGORIES) {
-        await scrapeGenericCategory(cat);
+        for (const cat of OTHER_CATEGORIES) {
+            await scrapeGenericCategory(cat);
+        }
+
+        await linkToStore();
+
+        const totalProd = await db.query("SELECT count(*) FROM produtos");
+        const totalTime = await db.query("SELECT count(*) FROM times");
+        console.log(`\n═══ RESULTADO FINAL ═══`);
+        console.log(`   Produtos: ${totalProd.rows[0].count}`);
+        console.log(`   Times: ${totalTime.rows[0].count}`);
+        console.log('✅ CONCLUÍDO');
+    } catch (err) {
+        console.error('ERRO NO FLUXO PRINCIPAL:', err);
+    } finally {
+        await db.end();
+        process.exit(0);
     }
-
-    await linkToStore();
-
-    const totalProd = await prisma.produto.count();
-    const totalTime = await prisma.time.count();
-    console.log(`\n═══ RESULTADO FINAL ═══`);
-    console.log(`   Produtos: ${totalProd}`);
-    console.log(`   Times: ${totalTime}`);
-    console.log('✅ CONCLUÍDO');
-
-    await prisma.$disconnect();
-    process.exit(0);
 }
 
 main().catch(err => { console.error('ERRO FATAL:', err); process.exit(1); });
