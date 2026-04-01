@@ -112,7 +112,7 @@ async function migrateImages() {
         await db.connect();
         
         const { rows: products } = await db.query(`
-            SELECT id, nome, fotos, slug, team_id FROM produtos 
+            SELECT id, nome, fotos, slug, time_id FROM produtos 
             WHERE (foto_principal LIKE '%yupoo.com%' OR fotos::text LIKE '%yupoo.com%')
             ORDER BY id DESC
             LIMIT 500

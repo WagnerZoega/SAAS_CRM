@@ -28,11 +28,11 @@ async function syncAll() {
         
         // 1. Pegar todos os produtos do Mestre
         const { rows: products } = await db.query(`
-            SELECT p.id, p.nome, p.fotos, p.foto_principal, p.team_id,
+            SELECT p.id, p.nome, p.fotos, p.foto_principal, p.time_id,
                    t.nome as team_name, t.slug as team_slug, t.escudo_url,
                    l.nome as liga_name, c.nome as cat_name, c.slug as cat_slug
             FROM produtos p
-            JOIN times t ON p.team_id = t.id
+            JOIN times t ON p.time_id = t.id
             JOIN ligas l ON t.liga_id = l.id
             JOIN categorias c ON l.categoria_id = c.id
             WHERE p.ativo = true
