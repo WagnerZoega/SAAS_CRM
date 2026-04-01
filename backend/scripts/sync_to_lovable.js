@@ -27,13 +27,26 @@ async function syncProject(pSource, project) {
     const supabase = createClient(project.url, project.key);
 
     for (const p of pSource) {
+        // 📸 Processamento de Fotos do Banco Local
         let fotos = p.fotos || [];
         if (typeof fotos === 'string') {
             try { fotos = JSON.parse(fotos); } catch (e) { fotos = []; }
         }
 
-        const foto_frente = (Array.isArray(fotos) && fotos.length > 0) ? fotos[0] : p.foto_principal;
-        const foto_verso = (Array.isArray(fotos) && fotos.length > 1) ? fotos[1] : null;
+        // Lógica Inteligente: Ignora ícones, logos, tabelas de medidas e etiquetas na foto principal
+        let fotosValidas = fotos.filter(f => 
+            f && 
+            !f.toLowerCase().includes('icon') && 
+            !f.toLowerCase().includes('logo') && 
+            !f.toLowerCase().includes('tag') && 
+            !f.toLowerCase().includes('table') && 
+            !f.toLowerCase().includes('size')
+        );
+
+        if (fotosValidas.length === 0) fotosValidas = fotos; // fallback se não houver filtro
+
+        const foto_frente = (fotosValidas.length > 0) ? fotosValidas[0] : (p.foto_principal || null);
+        const foto_verso = (fotosValidas.length > 1) ? fotosValidas[1] : (fotosValidas.length > 0 ? null : null);
 
         const masterProductData = {
             nome: p.nome,
